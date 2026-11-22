@@ -1,0 +1,20 @@
+# Editor and Agents
+.agents
+.claude
+.cursor
+.vscode
+.code
+.idea
+
+# Node Libraries
+node_modules/
+
+# Local Output
+build/
+logs/
+dist/
+out/
+bin/
+
+# Secrets
+.env

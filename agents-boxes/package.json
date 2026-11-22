@@ -1,0 +1,79 @@
+{
+  "name": "agents-boxes",
+  "displayName": "Agents Boxes",
+  "description": "Run AI CLIs in an embedded multi-tab terminal inside the editor.",
+  "version": "0.1.0",
+  "publisher": "orias",
+  "author": {
+    "name": "orias",
+    "email": "alongworkez@gmail.com"
+  },
+  "license": "MIT",
+  "icon": "assets/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Agents Boxes",
+      "properties": {
+        "agents-boxes.preventAltMenuFocus": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep focus in the terminal after Alt+Tab by setting window.customMenuBarAltFocus to false."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agents-boxes",
+          "title": "Agents Boxes",
+          "icon": "assets/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agents-boxes": [
+        {
+          "id": "agents-boxes.terminal",
+          "name": "Chat",
+          "type": "webview",
+          "icon": "assets/icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "agents-boxes.focusTerminal",
+        "title": "Agents Boxes: Focus Terminal"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "precompile": "node ../assets/tools/sync-assets.mjs",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.7.1",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.2.0-beta.13"
+  }
+}

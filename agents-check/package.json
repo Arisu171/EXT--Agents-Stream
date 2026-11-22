@@ -1,0 +1,240 @@
+{
+  "name": "agents-check",
+  "displayName": "Agents Check (Diff)",
+  "description": "Review AI file edits as inline diffs you can accept or revert.",
+  "version": "5.1.1",
+  "publisher": "orias",
+  "author": {
+    "name": "orias",
+    "email": "alongworkez@gmail.com"
+  },
+  "license": "MIT",
+  "icon": "assets/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Agents Check",
+      "properties": {
+        "agents-check.supportedFileDetectionMode": {
+          "type": "string",
+          "enum": [
+            "defaultAndCustom",
+            "customOnly"
+          ],
+          "default": "defaultAndCustom",
+          "description": "Controls whether Agents Check uses its built-in text file rules together with agents-check.includedPaths, or only includedPaths."
+        },
+        "agents-check.includedPaths": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Extra files to track for AI edits - a baseline is kept and edits open a diff - on top of the built-in list (`.ts`, `.py`, `.md`, `Dockerfile`, …). Uses `.gitignore` syntax, one pattern per entry, matched relative to each workspace folder's root:\n\n- `*.prisma` - every `.prisma` file, at any depth\n- `Jenkinsfile` - every file named exactly `Jenkinsfile`\n- `config.*.local` - `config.dev.local`, `config.prod.local` (`*` = any characters, `?` = exactly one)\n- `templates/**/*.tpl` - `.tpl` files only inside `templates`\n- `/scripts/*` - files directly in `scripts` at the repo root\n- `!*.lock` - stop tracking `.lock` files, even though they are on the built-in list\n\n`.prisma` on its own only matches a file named exactly `.prisma` - use `*.prisma`. `excludedPaths` and `.gitignore` always win, and binary files are skipped even if a pattern matches them."
+        },
+        "agents-check.supportedFileExtensions": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional file extensions that Agents Check should treat as text files. Entries may be written with or without a leading dot.",
+          "deprecationMessage": "Deprecated: use agents-check.includedPaths (.gitignore syntax) instead. Still read for now."
+        },
+        "agents-check.supportedFilenames": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional exact filenames that Agents Check should treat as text files.",
+          "deprecationMessage": "Deprecated: use agents-check.includedPaths (.gitignore syntax) instead. Still read for now."
+        },
+        "agents-check.supportedFilenamePatterns": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional filename glob patterns that Agents Check should treat as text files. Patterns match only the basename and support * and ? wildcards.",
+          "deprecationMessage": "Deprecated: use agents-check.includedPaths (.gitignore syntax) instead. Still read for now."
+        },
+        "agents-check.maxFileLines": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 0,
+          "markdownDescription": "Advanced: ignore files longer than this many lines - no baseline is kept and no diff tab ever opens for them. Set to `0` to disable the limit.\n\nDiff cost grows with the **square** of how many lines differ, so a large file that gets largely rewritten can block VS Code for seconds. Files that big are also almost always generated code, bundles or lock files rather than something reviewed hunk by hunk.\n\nWhy 5000: measured across `microsoft/vscode`, 99.8% of source files fall under it (median ~112 lines, p99 ~1980). Raise it if you genuinely review very large hand-written files - the TypeScript compiler's `checker.ts` is 54,433 lines - and accept that opening such a diff may stall the editor."
+        },
+        "agents-check.excludedPaths": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Paths that are never tracked - no baseline, no diff. Uses `.gitignore` syntax, one pattern per entry, matched relative to each workspace folder's root (never against folders outside the repo):\n\n- `generated` - any file or folder named `generated`, at any depth\n- `/generated` - only `generated` at the repo root\n- `generated/` - only folders named `generated`\n- `*.log`, `src/gen/**` - `*` stays within one folder, `**` spans folders\n- `!keep.log` - re-include something an earlier entry excluded\n\nAdds to the built-in list (`node_modules`, `.git`, `build`, `dist`, `out`, …), which cannot be re-included. Diffs already open for a newly excluded file stay until you resolve them."
+        },
+        "agents-check.respectGitignore": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Never track files ignored by git - no baseline, no diff. Uses the `.gitignore` files of the repo that contains each file (every folder level, nested repos included) plus `.git/info/exclude`, so build output, generated files and unpacked packages an agent writes in bulk don't open diff tabs.\n\nTurn it off to review AI edits to ignored files such as `.env.local`. The global `core.excludesFile` is not read. Diffs already open for a newly ignored file stay until you resolve them."
+        },
+        "agents-check.baselineScanConcurrency": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "Advanced: maximum number of files read concurrently during the initial baseline scan. Lower this for very large or remote workspaces."
+        },
+        "agents-check.burstDetectionEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Advanced: when many files change within a short window (e.g. git checkout, branch switch), hold files beyond the threshold to confirm whether it's really a git operation before opening a diff, instead of opening one immediately."
+        },
+        "agents-check.burstDetectionWindowMs": {
+          "type": "number",
+          "default": 300,
+          "minimum": 50,
+          "maximum": 5000,
+          "description": "Advanced: sliding time window (ms) used to count how many files changed in quick succession for burst detection."
+        },
+        "agents-check.burstDetectionThreshold": {
+          "type": "number",
+          "default": 8,
+          "minimum": 2,
+          "maximum": 500,
+          "description": "Advanced: number of distinct files changed within the burst window that counts as a batch operation (e.g. git checkout) rather than an AI tool edit."
+        },
+        "agents-check.burstDetectionHoldMs": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 500,
+          "maximum": 10000,
+          "description": "Advanced: how long (ms) to hold files beyond the burst threshold before opening their diff, if no git branch change gets confirmed in that time."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agents-check",
+          "title": "Agents Check",
+          "icon": "assets/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agents-check": [
+        {
+          "id": "agents-check.pendingFiles",
+          "name": "Pending Files",
+          "type": "webview",
+          "icon": "assets/icon.svg"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "agents-check.diffEditor",
+        "displayName": "Agents Check",
+        "selector": [
+          {
+            "filenamePattern": "*"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "agents-check.startSession",
+        "title": "Agents Check: Start Claude Session"
+      },
+      {
+        "command": "agents-check.acceptAllHunks",
+        "title": "Agents Check: Accept All Changes"
+      },
+      {
+        "command": "agents-check.acceptAllChanges",
+        "title": "Agents Check: Accept All Changes (All Files)"
+      },
+      {
+        "command": "agents-check.revertAllHunks",
+        "title": "Agents Check: Revert All Changes"
+      },
+      {
+        "command": "agents-check.openPendingFile",
+        "title": "Agents Check: Open Pending File"
+      },
+      {
+        "command": "agents-check.acceptFile",
+        "title": "Agents Check: Accept File"
+      },
+      {
+        "command": "agents-check.getPendingSummaries",
+        "title": "Agents Check: Get Pending Summaries"
+      },
+      {
+        "command": "agents-check.nextFile",
+        "title": "Agents Check: Next Edited File"
+      },
+      {
+        "command": "agents-check.prevFile",
+        "title": "Agents Check: Previous Edited File"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "agents-check.startSession",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      },
+      {
+        "command": "agents-check.acceptAllHunks",
+        "key": "ctrl+shift+y",
+        "mac": "cmd+shift+y"
+      },
+      {
+        "command": "agents-check.revertAllHunks",
+        "key": "ctrl+shift+z",
+        "mac": "cmd+shift+z"
+      },
+      {
+        "command": "agents-check.prevFile",
+        "key": "alt+h",
+        "when": "agents-check.hasPendingDiff"
+      },
+      {
+        "command": "agents-check.nextFile",
+        "key": "alt+l",
+        "when": "agents-check.hasPendingDiff"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "precompile": "node ../assets/tools/sync-assets.mjs",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/diff": "^7.0.2",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.7.1",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "diff": "^9.0.0",
+    "ignore": "^7.0.12",
+    "monaco-editor": "^0.49.0"
+  }
+}

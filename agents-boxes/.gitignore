@@ -1,0 +1,19 @@
+# Ide and editor
+.vscode
+.code
+.idea
+
+# Node Libraries
+node_modules/
+
+# Local Output
+logs/
+dist/
+out/
+bin/
+
+# Generated files
+assets
+
+# Symlinks
+assets/

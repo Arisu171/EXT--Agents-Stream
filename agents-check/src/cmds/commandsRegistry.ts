@@ -1,0 +1,154 @@
+import * as path from 'path';
+import * as vscode from 'vscode';
+import { DiffManager } from '../check/diffManager';
+import { IAiRunner } from '../runner/aiRunner';
+import { createRunner } from '../runner/runnerFactory';
+import { notify } from '../utils/notify';
+
+export interface CommandDeps {
+  diffManager: DiffManager;
+  context: vscode.ExtensionContext;
+  getRunner(): IAiRunner | undefined;
+  setRunner(runner: IAiRunner): void;
+  openPendingFileInAgent?(filePath: string): boolean;
+}
+
+export function registerAllCommands(deps: CommandDeps): void {
+  const { diffManager, context } = deps;
+
+  function getActiveDiffFilePath(): string | undefined {
+    return diffManager.getActiveFilePath() ?? diffManager.getPendingFiles()[0];
+  }
+
+  async function ensureRunner(): Promise<IAiRunner | undefined> {
+    if (deps.getRunner()) {
+      return deps.getRunner();
+    }
+
+    try {
+      const result = await createRunner(diffManager);
+      deps.setRunner(result.runner);
+      return result.runner;
+    } catch (err: unknown) {
+      vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+      return undefined;
+    }
+  }
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('agents-check.startSession', async () => {
+      const workingDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+      const runner = await ensureRunner();
+      if (!runner) {
+        return;
+      }
+
+      const toolLabel = runner.toolName.charAt(0).toUpperCase() + runner.toolName.slice(1);
+      const prompt = await vscode.window.showInputBox({
+        title: `Agents Check: Start ${toolLabel} Session`,
+        prompt: `Enter a prompt for ${toolLabel}`,
+        placeHolder: 'e.g. "Add JSDoc comments to all functions"',
+        ignoreFocusOut: true,
+      });
+      if (!prompt) {
+        return;
+      }
+
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Agents Check (${toolLabel})`, cancellable: false },
+        async (progress) => {
+          progress.report({ message: 'Starting session...' });
+          const onProgress = (step: string): void => {
+            progress.report({ message: step });
+          };
+
+          try {
+            await runner.run(prompt, workingDir, () => {}, onProgress);
+            notify(`${toolLabel} session complete.`);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            vscode.window.showErrorMessage(`${toolLabel} session failed: ${message}`);
+          }
+        }
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('agents-check.openPendingFile', async (filePath?: string) => {
+      if (!filePath || typeof filePath !== 'string') {
+        return;
+      }
+
+      try {
+        if (deps.openPendingFileInAgent?.(filePath)) {
+          return;
+        }
+        await diffManager.openDiff(filePath);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        vscode.window.showErrorMessage(`Agents Check: could not open file - ${message}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('agents-check.acceptAllHunks', async () => {
+      const filePath = getActiveDiffFilePath();
+      if (!filePath) {
+        notify('No active inline diff.');
+        return;
+      }
+      await diffManager.accept(filePath);
+      notify(`Accepted all changes: ${path.basename(filePath)}`);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('agents-check.acceptAllChanges', async (underRoot?: string) => {
+      const total = await diffManager.acceptAllPending(
+        typeof underRoot === 'string' && underRoot.trim() ? underRoot : undefined
+      );
+      if (total === 0) {
+        notify('No pending changes to accept.');
+        return;
+      }
+      notify(`Accepted all changes in ${total} file(s).`);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('agents-check.acceptFile', async (filePath?: string) => {
+      if (!filePath || typeof filePath !== 'string') {
+        return;
+      }
+      if (!diffManager.hasPendingDiff(filePath)) {
+        notify('No pending changes for that file.');
+        return;
+      }
+      await diffManager.accept(filePath);
+      notify(`Accepted all changes: ${path.basename(filePath)}`);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('agents-check.getPendingSummaries', async (underRoot?: string) => {
+      return diffManager.getPendingSummaries(
+        typeof underRoot === 'string' && underRoot.trim() ? underRoot : undefined
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('agents-check.revertAllHunks', async () => {
+      const filePath = getActiveDiffFilePath();
+      if (!filePath) {
+        notify('No active inline diff.');
+        return;
+      }
+      await diffManager.revert(filePath);
+      notify(`Reverted all changes: ${path.basename(filePath)}`);
+    })
+  );
+
+}

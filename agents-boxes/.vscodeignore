@@ -1,0 +1,10 @@
+src/**
+**/*.ts
+!out/**
+out/**/*.map
+node_modules/**
+!node_modules/node-pty/**
+!node_modules/@xterm/headless/**
+!node_modules/@xterm/addon-serialize/**
+**/*.map
+assets/tools/**

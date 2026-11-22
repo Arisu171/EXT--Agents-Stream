@@ -1,0 +1,275 @@
+{
+  "name": "agents-stream",
+  "displayName": "Agents Stream",
+  "description": "Review AI file edits as diffs and run AI CLIs in an embedded terminal.",
+  "version": "0.1.0",
+  "publisher": "orias",
+  "author": {
+    "name": "orias",
+    "email": "alongworkez@gmail.com"
+  },
+  "license": "MIT",
+  "icon": "assets/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": [
+      {
+        "title": "Agents Check",
+        "properties": {
+          "agents-check.supportedFileDetectionMode": {
+            "type": "string",
+            "enum": [
+              "defaultAndCustom",
+              "customOnly"
+            ],
+            "default": "defaultAndCustom",
+            "description": "Controls whether Agents Check uses its built-in text file rules together with agents-check.includedPaths, or only includedPaths."
+          },
+          "agents-check.includedPaths": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "Extra files to track for AI edits - a baseline is kept and edits open a diff - on top of the built-in list (`.ts`, `.py`, `.md`, `Dockerfile`, …). Uses `.gitignore` syntax, one pattern per entry, matched relative to each workspace folder's root."
+          },
+          "agents-check.supportedFileExtensions": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "description": "Additional file extensions that Agents Check should treat as text files.",
+            "deprecationMessage": "Deprecated: use agents-check.includedPaths (.gitignore syntax) instead. Still read for now."
+          },
+          "agents-check.supportedFilenames": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "description": "Additional exact filenames that Agents Check should treat as text files.",
+            "deprecationMessage": "Deprecated: use agents-check.includedPaths (.gitignore syntax) instead. Still read for now."
+          },
+          "agents-check.supportedFilenamePatterns": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "description": "Additional filename glob patterns that Agents Check should treat as text files.",
+            "deprecationMessage": "Deprecated: use agents-check.includedPaths (.gitignore syntax) instead. Still read for now."
+          },
+          "agents-check.maxFileLines": {
+            "type": "number",
+            "default": 5000,
+            "minimum": 0,
+            "markdownDescription": "Advanced: ignore files longer than this many lines - no baseline is kept and no diff tab ever opens for them. Set to `0` to disable the limit."
+          },
+          "agents-check.excludedPaths": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "Paths that are never tracked - no baseline, no diff. Uses `.gitignore` syntax relative to each workspace folder's root."
+          },
+          "agents-check.respectGitignore": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Never track files ignored by git - no baseline, no diff."
+          },
+          "agents-check.baselineScanConcurrency": {
+            "type": "number",
+            "default": 4,
+            "minimum": 1,
+            "maximum": 16,
+            "description": "Advanced: maximum number of files read concurrently during the initial baseline scan."
+          },
+          "agents-check.burstDetectionEnabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Advanced: when many files change within a short window, hold files beyond the threshold to confirm a git operation before treating them as AI edits."
+          },
+          "agents-check.burstDetectionWindowMs": {
+            "type": "number",
+            "default": 300,
+            "minimum": 50,
+            "maximum": 5000,
+            "description": "Advanced: sliding time window (ms) for burst detection."
+          },
+          "agents-check.burstDetectionThreshold": {
+            "type": "number",
+            "default": 8,
+            "minimum": 2,
+            "maximum": 500,
+            "description": "Advanced: number of distinct files changed within the burst window that counts as a batch operation."
+          },
+          "agents-check.burstDetectionHoldMs": {
+            "type": "number",
+            "default": 2000,
+            "minimum": 500,
+            "maximum": 10000,
+            "description": "Advanced: how long (ms) to hold burst-threshold-exceeding files if no git branch change is confirmed."
+          }
+        }
+      },
+      {
+        "title": "Agents Boxes",
+        "properties": {
+          "agents-boxes.preventAltMenuFocus": {
+            "type": "boolean",
+            "default": true,
+            "description": "Keep focus in the terminal after Alt+Tab by setting window.customMenuBarAltFocus to false."
+          }
+        }
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agents-check",
+          "title": "Agents Check",
+          "icon": "assets/icon.svg"
+        },
+        {
+          "id": "agents-boxes",
+          "title": "Agents Boxes",
+          "icon": "assets/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agents-check": [
+        {
+          "id": "agents-check.pendingFiles",
+          "name": "Pending Files",
+          "type": "webview",
+          "icon": "assets/icon.svg"
+        }
+      ],
+      "agents-boxes": [
+        {
+          "id": "agents-boxes.terminal",
+          "name": "Chat",
+          "type": "webview",
+          "icon": "assets/icon.svg"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "agents-check.diffEditor",
+        "displayName": "Agents Check",
+        "selector": [
+          {
+            "filenamePattern": "*"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "agents-check.startSession",
+        "title": "Agents Check: Start Claude Session"
+      },
+      {
+        "command": "agents-check.acceptAllHunks",
+        "title": "Agents Check: Accept All Changes"
+      },
+      {
+        "command": "agents-check.acceptAllChanges",
+        "title": "Agents Check: Accept All Changes (All Files)"
+      },
+      {
+        "command": "agents-check.revertAllHunks",
+        "title": "Agents Check: Revert All Changes"
+      },
+      {
+        "command": "agents-check.openPendingFile",
+        "title": "Agents Check: Open Pending File"
+      },
+      {
+        "command": "agents-check.acceptFile",
+        "title": "Agents Check: Accept File"
+      },
+      {
+        "command": "agents-check.getPendingSummaries",
+        "title": "Agents Check: Get Pending Summaries"
+      },
+      {
+        "command": "agents-check.nextFile",
+        "title": "Agents Check: Next Edited File"
+      },
+      {
+        "command": "agents-check.prevFile",
+        "title": "Agents Check: Previous Edited File"
+      },
+      {
+        "command": "agents-boxes.focusTerminal",
+        "title": "Agents Boxes: Focus Terminal"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "agents-check.startSession",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      },
+      {
+        "command": "agents-check.acceptAllHunks",
+        "key": "ctrl+shift+y",
+        "mac": "cmd+shift+y"
+      },
+      {
+        "command": "agents-check.revertAllHunks",
+        "key": "ctrl+shift+z",
+        "mac": "cmd+shift+z"
+      },
+      {
+        "command": "agents-check.prevFile",
+        "key": "alt+h",
+        "when": "agents-check.hasPendingDiff"
+      },
+      {
+        "command": "agents-check.nextFile",
+        "key": "alt+l",
+        "when": "agents-check.hasPendingDiff"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "node ../assets/tools/assemble.mjs",
+    "compile:shell": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && node ../assets/tools/package.mjs"
+  },
+  "devDependencies": {
+    "@types/diff": "^7.0.2",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.7.1",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
+    "@xterm/xterm": "^6.0.0",
+    "diff": "^9.0.0",
+    "ignore": "^7.0.12",
+    "monaco-editor": "^0.49.0",
+    "node-pty": "^1.2.0-beta.13"
+  }
+}

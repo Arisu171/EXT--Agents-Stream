@@ -1,0 +1,71 @@
+{
+  "folders": [
+    {
+      "name": "agents-stream",
+      "path": "agents-stream"
+    },
+    {
+      "name": "agents-check",
+      "path": "agents-check"
+    },
+    {
+      "name": "agents-boxes",
+      "path": "agents-boxes"
+    },
+    {
+      "name": "assets",
+      "path": "assets"
+    }
+  ],
+  "settings": {},
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Run Agents Stream",
+        "type": "extensionHost",
+        "request": "launch",
+        "args": [
+          "--extensionDevelopmentPath=${workspaceFolder:agents-stream}"
+        ],
+        "preLaunchTask": "Agents Stream: compile"
+      },
+      {
+        "name": "Run Diff Extension (Check only)",
+        "type": "extensionHost",
+        "request": "launch",
+        "args": [
+          "--extensionDevelopmentPath=${workspaceFolder:agents-check}"
+        ]
+      },
+      {
+        "name": "Run Chat Extension (Boxes only)",
+        "type": "extensionHost",
+        "request": "launch",
+        "args": [
+          "--extensionDevelopmentPath=${workspaceFolder:agents-boxes}"
+        ]
+      }
+    ]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Agents Stream: compile",
+        "type": "shell",
+        "command": "npm run compile",
+        "options": {
+          "cwd": "${workspaceFolder:agents-stream}"
+        },
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        },
+        "problemMatcher": [
+          "$tsc"
+        ]
+      }
+    ]
+  }
+}

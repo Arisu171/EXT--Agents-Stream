@@ -1,0 +1,383 @@
+
+import * as vscode from 'vscode';
+import { DiffManager } from './diffManager';
+import { calculateHunks } from './hunkCalculator';
+import { fromLf, toLf } from './eol';
+import { detectLanguageId } from './language';
+
+export const DIFF_EDITOR_VIEW_TYPE = 'agents-check.diffEditor';
+
+type IncomingMsg =
+  | { type: 'ready' }
+  | { type: 'acceptHunk'; newOriginal: string; newCurrent: string }
+  | { type: 'rejectHunk'; newOriginal: string; newCurrent: string }
+  | { type: 'editModified'; newCurrent: string }
+  | { type: 'acceptAll' }
+  | { type: 'rejectAll' }
+  | { type: 'nextFile' }
+  | { type: 'prevFile' }
+  | { type: 'save' }
+  | { type: 'undo' }
+  | { type: 'redo' }
+  | { type: 'cursor'; line: number; column: number; topLine?: number };
+
+export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly diffManager: DiffManager
+  ) {}
+
+  async resolveCustomTextEditor(
+    document: vscode.TextDocument,
+    webviewPanel: vscode.WebviewPanel,
+    _token: vscode.CancellationToken
+  ): Promise<void> {
+    const filePath = document.uri.fsPath;
+    const t0 = Date.now();
+    const tlog = (label: string): void => {
+      console.log('[agents-check TIMING ext] +' + (Date.now() - t0) + 'ms ' + label);
+    };
+    tlog('resolveCustomTextEditor entry');
+    const monacoRoot = vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'monaco-editor', 'min');
+    const viewRoot = vscode.Uri.joinPath(this.extensionUri, 'assets', 'view');
+
+    webviewPanel.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [monacoRoot, viewRoot],
+    };
+    webviewPanel.webview.html = this.buildHtml(webviewPanel.webview);
+    tlog('webview.html assigned');
+
+    this.diffManager.registerPanel(filePath, webviewPanel);
+
+    const disposables: vscode.Disposable[] = [];
+
+    let sentSnapshot: string | undefined;
+    let sentNav: { currentIdx: number; total: number } | undefined;
+    let awaitingSet = false;
+
+    const postNav = (): void => {
+      const nav = this.computeNav(filePath);
+      if (sentNav && sentNav.currentIdx === nav.currentIdx && sentNav.total === nav.total) { return; }
+      sentNav = nav;
+      void webviewPanel.webview.postMessage({ type: 'nav', nav });
+    };
+
+    const postSet = (): void => {
+      const snapshot = this.diffManager.getSnapshotContent(filePath);
+      if (snapshot === undefined) {
+        webviewPanel.dispose();
+        return;
+      }
+      const originalContent = toLf(snapshot);
+      const currentContent = toLf(document.getText());
+      const hunks = calculateHunks(originalContent, currentContent);
+      const nav = this.computeNav(filePath);
+      sentSnapshot = snapshot;
+      sentNav = nav;
+      awaitingSet = false;
+      void webviewPanel.webview.postMessage({
+        type: 'set',
+        filePath,
+        language: detectLanguageId(filePath),
+        originalContent,
+        currentContent,
+        hunks,
+        theme: currentMonacoTheme(),
+        editorConfig: readEditorConfig(),
+        nav,
+      });
+    };
+
+    let webviewReady = false;
+    let pendingSet = false;
+
+    disposables.push(
+      webviewPanel.webview.onDidReceiveMessage(async (msg: IncomingMsg) => {
+        if (msg.type === 'ready') {
+          webviewReady = true;
+          tlog('received ready from webview');
+          postSet();
+          tlog('postSet (set message sent) done');
+          return;
+        }
+        switch (msg.type) {
+          case 'acceptHunk':
+            awaitingSet = true;
+            await this.diffManager.applyHunkAcceptFromWebview(filePath, msg.newOriginal, msg.newCurrent);
+            return;
+          case 'rejectHunk':
+            awaitingSet = true;
+            await this.diffManager.applyHunkRejectFromWebview(filePath, msg.newOriginal, msg.newCurrent);
+            return;
+          case 'editModified':
+            await this.applyModifiedEdit(document, msg.newCurrent);
+            return;
+          case 'acceptAll':
+            await this.diffManager.accept(filePath);
+            return;
+          case 'rejectAll':
+            await this.diffManager.revert(filePath);
+            return;
+          case 'nextFile':
+            await this.gotoSibling(filePath, +1);
+            return;
+          case 'prevFile':
+            await this.gotoSibling(filePath, -1);
+            return;
+          case 'save':
+            await document.save();
+            return;
+          case 'undo':
+            await vscode.commands.executeCommand('undo');
+            return;
+          case 'redo':
+            await vscode.commands.executeCommand('redo');
+            return;
+          case 'cursor':
+            this.diffManager.setLastCursor(filePath, msg.line, msg.column, msg.topLine);
+            return;
+        }
+      })
+    );
+
+    disposables.push(
+      vscode.workspace.onDidChangeTextDocument((e) => {
+        if (e.document.uri.toString() !== document.uri.toString()) {
+          return;
+        }
+        if (webviewReady) {
+          postSet();
+        } else {
+          pendingSet = true;
+        }
+      })
+    );
+
+    disposables.push(
+      this.diffManager.onDidChangeDiffs(() => {
+        if (!webviewReady) {
+          pendingSet = true;
+          return;
+        }
+        if (awaitingSet || this.diffManager.getSnapshotContent(filePath) !== sentSnapshot) {
+          postSet();
+        } else {
+          postNav();
+        }
+      })
+    );
+
+    disposables.push(
+      vscode.window.onDidChangeActiveColorTheme(() => {
+        void webviewPanel.webview.postMessage({
+          type: 'theme-change',
+          theme: currentMonacoTheme(),
+        });
+      })
+    );
+
+    disposables.push(
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (!e.affectsConfiguration('editor')) { return; }
+        void webviewPanel.webview.postMessage({
+          type: 'config-change',
+          editorConfig: readEditorConfig(),
+        });
+      })
+    );
+
+    webviewPanel.onDidDispose(() => {
+      this.diffManager.unregisterPanel(filePath, webviewPanel);
+      while (disposables.length) {
+        disposables.pop()?.dispose();
+      }
+    });
+
+    if (pendingSet && webviewReady) {
+      postSet();
+    }
+  }
+
+  private async applyModifiedEdit(document: vscode.TextDocument, newCurrent: string): Promise<void> {
+    const expanded = fromLf(
+      newCurrent,
+      document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
+    );
+    if (document.getText() === expanded) { return; }
+    const edit = new vscode.WorkspaceEdit();
+    const fullRange = new vscode.Range(
+      new vscode.Position(0, 0),
+      document.lineAt(document.lineCount - 1).range.end
+    );
+    edit.replace(document.uri, fullRange, expanded);
+    await vscode.workspace.applyEdit(edit);
+  }
+
+  private async gotoSibling(currentPath: string, direction: 1 | -1): Promise<void> {
+    const count = this.diffManager.getPendingCount();
+    if (count <= 1) { return; }
+    const idx = this.diffManager.getPendingIndex(currentPath);
+    if (idx === -1) { return; }
+    const nextPath = this.diffManager.getPendingFileAt((idx + direction + count) % count);
+    if (!nextPath) { return; }
+    await this.diffManager.openDiff(nextPath);
+  }
+
+  private computeNav(filePath: string): { currentIdx: number; total: number } {
+    const idx = this.diffManager.getPendingIndex(filePath);
+    return {
+      currentIdx: idx === -1 ? 0 : idx + 1,
+      total: this.diffManager.getPendingCount(),
+    };
+  }
+
+  private buildHtml(webview: vscode.Webview): string {
+    const monacoBase = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'monaco-editor', 'min', 'vs')
+    );
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'assets', 'view', 'diff.monaco.js')
+    );
+    const styleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'assets', 'view', 'diff.monaco.css')
+    );
+    const cspSource = webview.cspSource;
+    const nonce = makeNonce();
+    const editorConfig = readEditorConfig();
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'none';
+    img-src ${cspSource} data:;
+    style-src ${cspSource} 'unsafe-inline';
+    font-src ${cspSource} data:;
+    script-src ${cspSource} 'nonce-${nonce}' 'unsafe-eval';
+    connect-src ${cspSource};
+    worker-src blob:;
+    child-src blob:;
+  " />
+  <link rel="stylesheet" href="${styleUri}" />
+  <title>Agents Check</title>
+</head>
+<body>
+  <div id="toolbar">
+    <div class="pill pill-hunks">
+      <button id="btn-prev-hunk" class="nav-btn" title="Previous hunk (Shift+F7)" aria-label="Previous hunk">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10l4-4 4 4"/></svg>
+      </button>
+      <span id="hunk-counter">0 / 0</span>
+      <button id="btn-next-hunk" class="nav-btn" title="Next hunk (F7)" aria-label="Next hunk">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+      </button>
+      <button id="btn-accept-hunk" class="toolbar-btn icon-btn accept" type="button" title="Accept current change block (Ctrl+Y)" aria-label="Accept hunk">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M2.5 8.5L6 12L13.5 3.5"/></svg>
+      </button>
+      <button id="btn-reject-hunk" class="toolbar-btn icon-btn reject" type="button" title="Reject current change block (Ctrl+N)" aria-label="Reject hunk">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square" aria-hidden="true"><path d="M3.5 3.5L12.5 12.5M12.5 3.5L3.5 12.5"/></svg>
+      </button>
+    </div>
+    <div class="pill pill-files">
+      <button id="btn-prev-file" class="nav-btn" title="Previous file (Alt+H)" aria-label="Previous file">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4l-4 4 4 4"/></svg>
+      </button>
+      <span id="file-counter">0 / 0</span>
+      <button id="btn-next-file" class="nav-btn" title="Next file (Alt+L)" aria-label="Next file">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
+      </button>
+      <button id="btn-accept-file" class="toolbar-btn icon-btn accept" type="button" title="Accept all changes in this file (Ctrl+Shift+Y)" aria-label="Accept file">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M2.5 8.5L6 12L13.5 3.5"/></svg>
+      </button>
+      <button id="btn-reject-file" class="toolbar-btn icon-btn reject" type="button" title="Reject all changes in this file" aria-label="Reject file">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square" aria-hidden="true"><path d="M3.5 3.5L12.5 12.5M12.5 3.5L3.5 12.5"/></svg>
+      </button>
+    </div>
+    <span id="toolbar-file"></span>
+  </div>
+  <div id="container"></div>
+  ${buildSkeleton(editorConfig)}
+
+  <script nonce="${nonce}">
+    window.__MONACO_BASE__ = "${monacoBase}";
+  </script>
+  <script nonce="${nonce}" src="${monacoBase}/loader.js"></script>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>`;
+  }
+}
+
+function currentMonacoTheme(): string {
+  switch (vscode.window.activeColorTheme.kind) {
+    case vscode.ColorThemeKind.Light: return 'vs';
+    case vscode.ColorThemeKind.Dark: return 'vs-dark';
+    case vscode.ColorThemeKind.HighContrast: return 'hc-black';
+    case vscode.ColorThemeKind.HighContrastLight: return 'hc-light';
+    default: return 'vs-dark';
+  }
+}
+
+interface EditorConfigPayload {
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  tabSize: number;
+  insertSpaces: boolean;
+  wordWrap: string;
+  renderWhitespace: string;
+  minimapEnabled: boolean;
+}
+
+function readEditorConfig(): EditorConfigPayload {
+  const cfg = vscode.workspace.getConfiguration('editor');
+  return {
+    fontFamily: cfg.get<string>('fontFamily', 'Consolas, "Courier New", monospace'),
+    fontSize: cfg.get<number>('fontSize', 14),
+    lineHeight: cfg.get<number>('lineHeight', 0),
+    tabSize: cfg.get<number>('tabSize', 4),
+    insertSpaces: cfg.get<boolean>('insertSpaces', true),
+    wordWrap: cfg.get<string>('wordWrap', 'off'),
+    renderWhitespace: cfg.get<string>('renderWhitespace', 'selection'),
+    minimapEnabled: cfg.get<boolean>('minimap.enabled', true),
+  };
+}
+
+function monacoLineHeight(fontSize: number, lineHeight: number): number {
+  const golden = process.platform === 'darwin' ? 1.5 : 1.35;
+  let h = lineHeight === 0 ? golden * fontSize : lineHeight < 8 ? lineHeight * fontSize : lineHeight;
+  h = Math.round(h);
+  return Math.max(8, h);
+}
+
+const SKELETON_SHAPE: Array<[number, number]> = [
+  [0, 38], [0, 52], [1, 44], [1, 61], [2, 35], [2, 48], [1, 22], [0, 8], [0, 0],
+  [0, 46], [1, 57], [1, 33], [2, 64], [2, 41], [1, 12], [0, 8], [0, 0], [0, 29],
+];
+
+function buildSkeleton(cfg: EditorConfigPayload): string {
+  const fontSize = cfg.fontSize > 0 ? cfg.fontSize : 14;
+  const lineHeight = monacoLineHeight(fontSize, cfg.lineHeight);
+  const rows: string[] = [];
+  for (let i = 0; i < 80; i++) {
+    const [indent, width] = SKELETON_SHAPE[i % SKELETON_SHAPE.length];
+    const bar = width > 0
+      ? `<span class="sk-code" style="margin-left:${indent * 2}em;width:${width}%"></span>`
+      : '';
+    rows.push(`<div class="sk-row"><span class="sk-num"></span>${bar}</div>`);
+  }
+  return `<div id="skeleton" aria-busy="true" aria-label="Loading diff" style="--sk-line-height:${lineHeight}px;font-size:${fontSize}px">`
+    + `<div class="sk-rows">${rows.join('')}</div>`
+    + '<div class="sk-error" hidden>Failed to load the diff editor.</div></div>';
+}
+
+function makeNonce(): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let out = '';
+  for (let i = 0; i < 32; i++) {
+    out += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+  }
+  return out;
+}
