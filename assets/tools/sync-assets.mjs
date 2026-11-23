@@ -15,6 +15,31 @@ function rmrf(target) {
   fs.rmSync(target, { recursive: true, force: true });
 }
 
+function ensureHardLink(linkPath, targetAbs) {
+  if (!fs.existsSync(targetAbs)) {
+    throw new Error(`[sync-assets] missing target: ${targetAbs}`);
+  }
+
+  let alreadyLinked = false;
+  try {
+    const linkStat = fs.statSync(linkPath);
+    const targetStat = fs.statSync(targetAbs);
+    alreadyLinked =
+      linkStat.dev === targetStat.dev &&
+      linkStat.ino === targetStat.ino &&
+      linkStat.size === targetStat.size;
+  } catch {
+    alreadyLinked = false;
+  }
+
+  if (alreadyLinked) {
+    return;
+  }
+
+  fs.rmSync(linkPath, { force: true });
+  fs.linkSync(targetAbs, linkPath);
+}
+
 function ensureLink(linkPath, targetAbs) {
   if (!fs.existsSync(targetAbs)) {
     throw new Error(`[sync-assets] missing target: ${targetAbs}`);
@@ -64,7 +89,12 @@ function main() {
     fs.copyFileSync(licenseSrc, path.join(pkgRoot, 'LICENSE'));
   }
 
-  console.log('[sync-assets] linked assets/ → repo assets/; LICENSE copied');
+  ensureHardLink(
+    path.join(monoRoot, 'agents-stream', 'README.md'),
+    path.join(monoRoot, 'README.md'),
+  );
+
+  console.log('[sync-assets] linked assets/ → repo assets/; README hardlinked; LICENSE copied');
 }
 
 main();

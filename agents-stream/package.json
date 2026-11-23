@@ -4,6 +4,10 @@
   "description": "Review AI file edits as diffs and run AI CLIs in an embedded terminal.",
   "version": "0.1.0",
   "publisher": "orias",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Arisu171/EXT--Agents-Stream.git"
+  },
   "author": {
     "name": "orias",
     "email": "alongworkez@gmail.com"

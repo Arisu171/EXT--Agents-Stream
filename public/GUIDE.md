@@ -22,6 +22,7 @@ node assets/tools/sync-assets.mjs
 ```
 
 This creates `agents-check/assets`, `agents-boxes/assets`, and `agents-stream/assets` as junctions (Windows) or directory symlinks (POSIX), and copies `LICENSE` into each package.
+It also hardlinks the repo-root `README.md` into `agents-stream/README.md` so VS Code can read the extension README from the VSIX.
 
 ### Option B: manual links
 

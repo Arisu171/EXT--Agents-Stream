@@ -14,13 +14,26 @@ const checkRoot = path.join(monoRoot, 'agents-check');
 const boxesRoot = path.join(monoRoot, 'agents-boxes');
 
 function run(cwd, command, args) {
-  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const exe = command === 'npm' ? npmCmd : command;
-  console.log(`[assemble] ${cwd}: ${exe} ${args.join(' ')}`);
-  const result = spawnSync(exe, args, {
+  let exe = command;
+  let spawnArgs = args;
+
+  if (command === 'npm') {
+    const npmCli = process.env.npm_execpath;
+    if (npmCli) {
+      exe = process.execPath;
+      spawnArgs = [npmCli, ...args];
+    } else if (process.platform === 'win32') {
+      exe = process.env.ComSpec || 'cmd.exe';
+      spawnArgs = ['/d', '/s', '/c', `npm.cmd ${args.join(' ')}`];
+    }
+  } else if (command === 'node') {
+    exe = process.execPath;
+  }
+
+  console.log(`[assemble] ${cwd}: ${exe} ${spawnArgs.join(' ')}`);
+  const result = spawnSync(exe, spawnArgs, {
     cwd,
     stdio: 'inherit',
-    shell: process.platform === 'win32',
   });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);

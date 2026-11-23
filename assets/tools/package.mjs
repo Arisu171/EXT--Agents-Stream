@@ -16,10 +16,13 @@ const outFile = path.join(buildDir, `${pkg.name}-${pkg.version}.vsix`);
 
 fs.mkdirSync(buildDir, { recursive: true });
 
-const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const args = [
+  'exec',
   '--yes',
+  '--package',
   '@vscode/vsce',
+  '--',
+  'vsce',
   'package',
   '--allow-missing-repository',
   '--follow-symlinks',
@@ -27,11 +30,32 @@ const args = [
   outFile,
 ];
 
-console.log(`[package] ${streamRoot}: ${npxCmd} ${args.join(' ')}`);
-const result = spawnSync(npxCmd, args, {
+const npmCli = process.env.npm_execpath;
+let exe = process.execPath;
+let spawnArgs = npmCli ? [npmCli, ...args] : args;
+if (!npmCli) {
+  const npxArgs = [
+    '--yes',
+    '@vscode/vsce',
+    'package',
+    '--allow-missing-repository',
+    '--follow-symlinks',
+    '--out',
+    outFile,
+  ];
+  if (process.platform === 'win32') {
+    exe = process.env.ComSpec || 'cmd.exe';
+    spawnArgs = ['/d', '/s', '/c', `npx.cmd ${npxArgs.join(' ')}`];
+  } else {
+    exe = 'npx';
+    spawnArgs = npxArgs;
+  }
+}
+
+console.log(`[package] ${streamRoot}: ${exe} ${spawnArgs.join(' ')}`);
+const result = spawnSync(exe, spawnArgs, {
   cwd: streamRoot,
   stdio: 'inherit',
-  shell: process.platform === 'win32',
 });
 
 if (result.status !== 0) {
